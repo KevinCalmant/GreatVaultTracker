@@ -1,0 +1,19 @@
+## Interface: 110300, 110205, 110200, 110107, 110105, 110100, 120001
+## Title: Great Vault Tracker
+## Notes: Track Great Vault completion across all your characters.
+## Author: kevin.calmant
+## Version: 1.0.0
+## SavedVariables: VaultTrackerDB
+## OptionalDeps: LibStub, LibDataBroker-1.1, LibDBIcon-1.0
+
+# Optional embedded libraries — drop into libs/ if you want the minimap button.
+# libs\LibStub\LibStub.lua
+# libs\CallbackHandler-1.0\CallbackHandler-1.0.lua
+# libs\LibDataBroker-1.1\LibDataBroker-1.1.lua
+# libs\LibDBIcon-1.0\LibDBIcon-1.0.lua
+
+Locales\enUS.lua
+Constants.lua
+Data.lua
+GreatVaultTracker.lua
+UI.lua

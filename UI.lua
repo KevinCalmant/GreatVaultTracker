@@ -6,7 +6,7 @@ local C = ns.Constants
 local L = ns.L
 local Data = ns.Data
 
-local ROW_HEIGHT            = 70
+local ROW_HEIGHT            = 88  -- header + 3 category lines + 1 key line + padding
 local ROW_SPACING           = 4
 local HEADER_HEIGHT         = 18
 local CATEGORY_LINE_HEIGHT  = 16
@@ -109,6 +109,51 @@ local function CreateCategoryLine(parent, index)
     return line
 end
 
+-- Key line: label + content fontstring (name, +level, status) + amber clock
+-- icon (shown only when the weekly reset is imminent AND a key is held).
+-- Tooltip is attached to an invisible hover frame covering the content area.
+local function CreateKeyLine(parent, index)
+    local line = CreateFrame("Frame", nil, parent)
+    line:SetHeight(CATEGORY_LINE_HEIGHT)
+    line:SetPoint("TOPLEFT",  parent, "TOPLEFT",  SIDE_PAD, -HEADER_HEIGHT - (index - 1) * CATEGORY_LINE_HEIGHT)
+    line:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -SIDE_PAD, -HEADER_HEIGHT - (index - 1) * CATEGORY_LINE_HEIGHT)
+
+    line.label = line:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    line.label:SetPoint("LEFT", 0, 0)
+    line.label:SetWidth(LABEL_WIDTH)
+    line.label:SetJustifyH("LEFT")
+    line.label:SetText(L.KEY_LABEL)
+
+    line.content = line:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    line.content:SetPoint("LEFT", line.label, "RIGHT", 4, 0)
+    line.content:SetJustifyH("LEFT")
+    line.content:SetWordWrap(false)
+
+    line.clock = line:CreateTexture(nil, "OVERLAY")
+    line.clock:SetSize(14, 14)
+    line.clock:SetPoint("LEFT", line.content, "RIGHT", 4, 0)
+    line.clock:SetTexture(C.KEY_RESET_ICON)
+    line.clock:SetVertexColor(1, 0.75, 0)
+    line.clock:Hide()
+
+    -- Invisible hover area for tooltips (depleted reason or reset-soon warning).
+    line.hover = CreateFrame("Frame", nil, line)
+    line.hover:SetPoint("LEFT", line.content, "LEFT", 0, 0)
+    line.hover:SetPoint("RIGHT", line, "RIGHT", 0, 0)
+    line.hover:SetPoint("TOP", line, "TOP", 0, 0)
+    line.hover:SetPoint("BOTTOM", line, "BOTTOM", 0, 0)
+    line.hover:EnableMouse(true)
+    line.hover:SetScript("OnEnter", function(self)
+        if not self.tooltipText then return end
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText(self.tooltipText, 1, 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    line.hover:SetScript("OnLeave", GameTooltip_Hide)
+
+    return line
+end
+
 local function CreateRow(parent)
     local row = CreateFrame("Frame", nil, parent)
     row:SetHeight(ROW_HEIGHT)
@@ -133,6 +178,9 @@ local function CreateRow(parent)
     for i = 1, #C.CATEGORY_ORDER do
         row.categories[i] = CreateCategoryLine(row, i)
     end
+
+    -- Key line sits directly below the last category line.
+    row.keyLine = CreateKeyLine(row, #C.CATEGORY_ORDER + 1)
 
     -- Bottom separator
     row.sep = row:CreateTexture(nil, "BACKGROUND")
@@ -166,6 +214,79 @@ end
 -- ---------------------------------------------------------------------------
 -- Row population
 -- ---------------------------------------------------------------------------
+
+local function LevelColorHex(level)
+    if level >= C.KEY_LEVEL_HIGH then return C.KEY_COLOR_HIGH_HEX
+    elseif level >= C.KEY_LEVEL_MID then return C.KEY_COLOR_MID_HEX
+    else return C.KEY_COLOR_LOW_HEX end
+end
+
+-- Resolves the dungeon icon at render time — per spec, we store only the
+-- MapChallengeModeID and look up the texture each refresh.
+local function DungeonIconEscape(dungeonID)
+    if not dungeonID or dungeonID == 0 then return "" end
+    if C_ChallengeMode and C_ChallengeMode.GetMapUIInfo then
+        local _, _, _, texture = C_ChallengeMode.GetMapUIInfo(dungeonID)
+        if texture and texture ~= "" then
+            return ("|T%s:14:14|t "):format(texture)
+        end
+    end
+    return ""
+end
+
+local function FillKeyLine(line, keystone)
+    if not keystone or not keystone.hasKey then
+        -- No key this week. If the character has a Resilient Keystone floor
+        -- earned, show it alongside — it still applies to next week's key.
+        local floor = keystone and keystone.floor or 0
+        if floor > 0 then
+            line.content:SetText(L.KEY_NO_KEY_WITH_FLOOR:format(floor))
+            line.hover.tooltipText = L.TOOLTIP_FLOOR:format(floor)
+        else
+            line.content:SetText(L.KEY_NO_KEY)
+            line.hover.tooltipText = nil
+        end
+        line.clock:Hide()
+        return
+    end
+
+    local level = keystone.level or 0
+    local hex   = LevelColorHex(level)
+    local icon  = DungeonIconEscape(keystone.dungeonID)
+    local name  = keystone.dungeonName or "Unknown"
+
+    -- "Resilient Keystone" in WoW is an achievement-based season-long floor.
+    -- If the character has earned one, display the floor level and flag the
+    -- key as resilient. Otherwise show it as standard.
+    local floor = keystone.floor or 0
+    local statusText = (floor > 0)
+        and L.KEY_FLOOR:format(floor)
+        or  L.KEY_STANDARD
+
+    line.content:SetText(("%s%s  %s+%d|r  %s"):format(icon, name, hex, level, statusText))
+
+    local tooltip
+    if floor > 0 then
+        tooltip = L.TOOLTIP_FLOOR:format(floor)
+    end
+
+    -- Amber clock when the weekly reset is imminent and the player still holds
+    -- an unused key (i.e., a refresh is about to wipe this level).
+    local secsUntilReset = 0
+    if C_DateAndTime and C_DateAndTime.GetSecondsUntilWeeklyReset then
+        secsUntilReset = C_DateAndTime.GetSecondsUntilWeeklyReset() or 0
+    end
+    if secsUntilReset > 0 and secsUntilReset < C.KEY_RESET_WARNING_SECONDS then
+        line.clock:Show()
+        local hours = math.floor(secsUntilReset / 3600)
+        local minutes = math.floor((secsUntilReset % 3600) / 60)
+        tooltip = L.TOOLTIP_RESET_SOON:format(hours, minutes)
+    else
+        line.clock:Hide()
+    end
+
+    line.hover.tooltipText = tooltip
+end
 
 local function FillRow(row, char)
     row.name:SetText(("%s-%s"):format(char.name or "?", char.realm or "?"))
@@ -204,6 +325,8 @@ local function FillRow(row, char)
         local progressFmt  = L[C.CATEGORY_PROGRESS_KEY[catKey]]
         line.progress:SetText(progressFmt:format(data.progress or 0, maxThreshold))
     end
+
+    FillKeyLine(row.keyLine, char.keystone)
 end
 
 -- ---------------------------------------------------------------------------

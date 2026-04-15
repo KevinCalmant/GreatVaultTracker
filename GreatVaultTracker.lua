@@ -42,30 +42,43 @@ function Core.CollectVaultData()
         return false
     end
 
-    -- Fetch all three type buckets, then route each result by its own `.type`
-    -- field rather than trusting the type ID we passed. The enum integers have
-    -- shifted between patches and even between regions — this makes us correct
-    -- no matter what the current mapping is.
-    local buckets = { [C.CATEGORIES.RAID] = nil, [C.CATEGORIES.MYTHIC_PLUS] = nil, [C.CATEGORIES.PVP] = nil }
+    -- Fetch all three type buckets, then route each result to its storage key
+    -- by looking up the `.type` the API reports against the enum's *named*
+    -- fields. Enum integer values have shifted between patches — but the names
+    -- haven't — so mapping by name keeps us correct regardless of the current
+    -- integer scheme. We deliberately do NOT route via C.CATEGORIES.*, because
+    -- those fall back to hardcoded integers when a field is missing from the
+    -- enum, and the fallback can collide with the API's actual `.type` values
+    -- (e.g. Raid fallback=1 collides with Activities=1, causing M+ data to be
+    -- shown on the Raid line).
+    local WRCTT = (Enum and Enum.WeeklyRewardChestThresholdType) or {}
+    local typeToStorageKey = {}
+    if WRCTT.Raid       then typeToStorageKey[WRCTT.Raid]       = "raid"       end
+    if WRCTT.MythicPlus then typeToStorageKey[WRCTT.MythicPlus] = "mythicPlus" end
+    if WRCTT.Activities then typeToStorageKey[WRCTT.Activities] = "mythicPlus" end
+    if WRCTT.Dungeon    then typeToStorageKey[WRCTT.Dungeon]    = "mythicPlus" end
+    if WRCTT.RankedPvP  then typeToStorageKey[WRCTT.RankedPvP]  = "pvp"        end
+    if WRCTT.World      then typeToStorageKey[WRCTT.World]      = "pvp"        end
+
+    local collected = { raid = nil, mythicPlus = nil, pvp = nil }
     local anyData = false
     for typeId = 1, 3 do
         local acts = C_WeeklyRewards.GetActivities(typeId)
         if type(acts) == "table" then
             anyData = true
-            -- Use the reported `.type` on the first activity as the canonical
-            -- category. Fall back to the requested typeId if the list is empty.
-            local reportedType = (acts[1] and acts[1].type) or typeId
-            if buckets[reportedType] == nil then
-                buckets[reportedType] = acts
+            local reportedType = acts[1] and acts[1].type
+            local storageKey = typeToStorageKey[reportedType] or typeToStorageKey[typeId]
+            if storageKey and collected[storageKey] == nil then
+                collected[storageKey] = acts
             end
         end
     end
 
     if not anyData then return false end
 
-    local raid  = buckets[C.CATEGORIES.RAID]        or {}
-    local mplus = buckets[C.CATEGORIES.MYTHIC_PLUS] or {}
-    local pvp   = buckets[C.CATEGORIES.PVP]         or {}
+    local raid  = collected.raid       or {}
+    local mplus = collected.mythicPlus or {}
+    local pvp   = collected.pvp        or {}
 
     local _, class = UnitClass("player")
     local key = Data.GetCurrentKey()
@@ -117,6 +130,9 @@ local function OnPlayerLogin()
     end
 
     eventFrame:RegisterEvent("WEEKLY_REWARDS_UPDATE")
+    eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+    eventFrame:RegisterEvent("CHALLENGE_MODE_COMPLETED")
+    eventFrame:RegisterEvent("BAG_UPDATE_DELAYED")
 
     if ns.UI and ns.UI.Init then ns.UI.Init() end
 
@@ -137,6 +153,20 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1)
         if not Core.CollectVaultData() then
             C_Timer.After(2, function() Core.CollectVaultData() end)
         end
+    elseif event == "PLAYER_ENTERING_WORLD" then
+        -- GetOwnedKeystoneLevel may return nil at login, so schedule a retry.
+        if ns.Keystone then
+            ns.Keystone.Collect()
+            C_Timer.After(3, function()
+                if ns.Keystone then ns.Keystone.Collect() end
+            end)
+        end
+    elseif event == "CHALLENGE_MODE_COMPLETED" then
+        -- Run just ended. Key may not be updated in bag yet — BAG_UPDATE_DELAYED
+        -- follows up once the new key appears.
+        if ns.Keystone then ns.Keystone.Collect() end
+    elseif event == "BAG_UPDATE_DELAYED" then
+        if ns.Keystone then ns.Keystone.CollectIfChanged() end
     end
 end)
 
@@ -171,6 +201,53 @@ SlashCmdList["GREATVAULTTRACKER"] = function(msg)
         if ns.UI then ns.UI.Hide() end
     elseif msg == "reset" then
         StaticPopup_Show("GVT_RESET_CONFIRM")
+    elseif msg == "keystonereset" then
+        local n = Data.ResetKeystones()
+        print(L.KEYSTONE_RESET_DONE:format(n))
+        if ns.Keystone then ns.Keystone.Collect() end
+        if ns.UI and ns.UI.Refresh then ns.UI.Refresh() end
+    elseif msg == "keystonedebug" then
+        -- Show the keystone tooltip scan result and the raw tooltip lines so
+        -- we can verify what the game exposes for this character's key.
+        if not ns.Keystone then
+            print("|cffff2020Keystone module not loaded.|r")
+        else
+            local K = ns.Keystone
+            print("|cff1eff00GVT keystone debug|r — character: " .. UnitName("player"))
+            print(("  FloorByTooltip() = %s"):format(tostring(K.FloorByTooltip())))
+
+            -- Dump the keystone tooltip lines so we can see what text the
+            -- game actually exposes (useful if the parser misses something).
+            local keystoneBag, keystoneSlot
+            if C_Container and C_Container.GetContainerNumSlots then
+                for bag = 0, 4 do
+                    local slots = C_Container.GetContainerNumSlots(bag)
+                    for slot = 1, slots do
+                        local info = C_Container.GetContainerItemInfo(bag, slot)
+                        if info and info.itemID == K.KEYSTONE_ITEM_ID then
+                            keystoneBag, keystoneSlot = bag, slot
+                            break
+                        end
+                    end
+                    if keystoneBag then break end
+                end
+            end
+            if not keystoneBag then
+                print("  No keystone item found in bags.")
+            elseif C_TooltipInfo and C_TooltipInfo.GetBagItem then
+                local data = C_TooltipInfo.GetBagItem(keystoneBag, keystoneSlot)
+                if data and data.lines then
+                    print(("  Keystone tooltip (bag %d, slot %d):"):format(keystoneBag, keystoneSlot))
+                    for i, line in ipairs(data.lines) do
+                        print(("    [%d] %s"):format(i, tostring(line.leftText)))
+                    end
+                else
+                    print("  Keystone tooltip data unavailable.")
+                end
+            else
+                print("  C_TooltipInfo.GetBagItem not available on this client.")
+            end
+        end
     elseif msg == "prune" then
         local n = Data.Prune()
         print(L.PRUNE_DONE:format(n))
@@ -179,11 +256,9 @@ SlashCmdList["GREATVAULTTRACKER"] = function(msg)
     elseif msg == "debug" then
         local WRCTT = (Enum and Enum.WeeklyRewardChestThresholdType) or {}
         print("|cff1eff00GVT debug|r — Enum.WeeklyRewardChestThresholdType:")
-        print(("  Raid=%s  MythicPlus=%s  Activities=%s  RankedPvP=%s  World=%s"):format(
+        print(("  Raid=%s  MythicPlus=%s  Activities=%s  Dungeon=%s  RankedPvP=%s  World=%s"):format(
             tostring(WRCTT.Raid), tostring(WRCTT.MythicPlus), tostring(WRCTT.Activities),
-            tostring(WRCTT.RankedPvP), tostring(WRCTT.World)))
-        print(("Addon mapping: RAID=%d  MYTHIC_PLUS=%d  PVP=%d"):format(
-            C.CATEGORIES.RAID, C.CATEGORIES.MYTHIC_PLUS, C.CATEGORIES.PVP))
+            tostring(WRCTT.Dungeon), tostring(WRCTT.RankedPvP), tostring(WRCTT.World)))
         for t = 1, 3 do
             local acts = C_WeeklyRewards and C_WeeklyRewards.GetActivities and C_WeeklyRewards.GetActivities(t)
             print(("GetActivities(%d) -> %s entries"):format(t, acts and #acts or "nil"))

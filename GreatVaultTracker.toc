@@ -15,5 +15,6 @@
 Locales\enUS.lua
 Constants.lua
 Data.lua
+Keystone.lua
 GreatVaultTracker.lua
 UI.lua

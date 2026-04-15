@@ -23,6 +23,14 @@ ns.L = {
     TOOLTIP_PVP         = "Earn %d rated PvP wins to unlock this slot.",
     TOOLTIP_UNKNOWN     = "Data not yet collected — log into this character with the addon enabled.",
 
+    KEY_LABEL                   = "Key:",
+    KEY_NO_KEY                  = "|cffaaaaaa— No key this week|r",
+    KEY_NO_KEY_WITH_FLOOR       = "|cffaaaaaa— No key|r   |cffffcc00🛡 Floor +%d|r",
+    KEY_FLOOR                   = "|cffffcc00🛡 Resilient (Floor +%d)|r",
+    KEY_STANDARD                = "|cffaaaaaa— Standard|r",
+    TOOLTIP_FLOOR               = "Resilient Keystone achievement earned — keys on this character will not deplete below +%d this season.",
+    TOOLTIP_RESET_SOON          = "Key resets in %dh %dm — log in to use it!",
+
     MINIMAP_TITLE       = "Great Vault Tracker",
     MINIMAP_HINT        = "Left-click: toggle window\nRight-click: hide",
     MINIMAP_UNLOCKED    = "Unlocked slots this week: %d",
@@ -30,6 +38,7 @@ ns.L = {
     RESET_CONFIRM       = "Clear all Great Vault Tracker data? This cannot be undone.",
     RESET_DONE          = "|cff1eff00Great Vault Tracker:|r all data cleared.",
     PRUNE_DONE          = "|cff1eff00Great Vault Tracker:|r removed %d stale characters.",
+    KEYSTONE_RESET_DONE = "|cff1eff00Great Vault Tracker:|r cleared keystone data for %d characters.",
     SEASON_RESET        = "|cff1eff00Great Vault Tracker:|r new season detected — data reset.",
-    UNKNOWN_CMD         = "|cff1eff00Great Vault Tracker:|r commands: /gvt [show|hide|reset|prune]",
+    UNKNOWN_CMD         = "|cff1eff00Great Vault Tracker:|r commands: /gvt [show|hide|reset|prune|keystonereset]",
 }

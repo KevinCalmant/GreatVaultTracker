@@ -3,18 +3,16 @@ local _, ns = ...
 ns.Constants = {}
 local C = ns.Constants
 
--- Resolved from Enum.WeeklyRewardChestThresholdType at load time. If the enum
--- exists and the named fields are present, we use them — that's the only
--- authoritative source. If the enum is missing or uses a different schema on
--- the user's client, we fall back to the values observed on current retail
--- (Raid=1, PvP/World=2, MythicPlus/Activities=3). Because CollectVaultData()
--- routes by each activity's own `.type` field, these values only matter for
--- the storage-key and display-order lookup — not for what data ends up where.
-local WRCTT = (Enum and Enum.WeeklyRewardChestThresholdType) or {}
+-- Logical category identifiers used as table keys for label / tooltip /
+-- display-order lookups. These are NOT the API's `.type` integers — routing
+-- of raw C_WeeklyRewards data into storage is done by enum name in
+-- Core.CollectVaultData. We use negative sentinel values here so that if this
+-- table is ever (mis)used as an API type key, it cannot collide with a real
+-- `.type` value returned by the API.
 C.CATEGORIES = {
-    RAID        = WRCTT.Raid                                            or 1,
-    PVP         = WRCTT.RankedPvP  or WRCTT.World                       or 2,
-    MYTHIC_PLUS = WRCTT.MythicPlus or WRCTT.Activities or WRCTT.Dungeon or 3,
+    RAID        = -1,
+    PVP         = -2,
+    MYTHIC_PLUS = -3,
 }
 
 -- Order used when rendering a character row: Raid, then Mythic+, then PvP.
@@ -58,3 +56,19 @@ C.MINIMAP_ICON          = "Interface\\Icons\\INV_Misc_Bag_07_Green"
 C.COLOR_SLOT_UNLOCKED   = { 1.0, 0.82, 0.0, 1.0 }  -- gold
 C.COLOR_SLOT_LOCKED     = { 0.25, 0.25, 0.25, 1.0 }
 C.COLOR_SLOT_BORDER     = { 0.0, 0.0, 0.0, 0.8 }
+
+-- Keystone level color thresholds (inclusive lower bound → color hex).
+-- Used to colorize the "+N" key-level text.
+C.KEY_LEVEL_HIGH        = 10    -- green
+C.KEY_LEVEL_MID         = 5     -- yellow
+C.KEY_COLOR_HIGH_HEX    = "|cff1eff00"
+C.KEY_COLOR_MID_HEX     = "|cffffff00"
+C.KEY_COLOR_LOW_HEX     = "|cffaaaaaa"
+
+-- Show an amber "reset soon" indicator when the weekly reset is within this
+-- many seconds AND the character still has an unused key.
+C.KEY_RESET_WARNING_SECONDS = 24 * 60 * 60
+
+-- Texture for the reset-soon clock indicator — a reliably-present Blizzard icon.
+C.KEY_RESET_ICON        = "Interface\\Icons\\Spell_Nature_TimeStop"
+
